@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>GNPy Topology Studio</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="research.css">
+</head>
+<body>
+<div id="app" class="console-collapsed">
+  <header>
+    <div class="logo">GNPY <span>// topology studio</span></div>
+    <div class="spacer"></div>
+    <button id="btnTheme" title="Switch theme">☀ Light theme</button>
+    <button id="btnLoadEqpt">Load equipment library</button>
+    <button id="btnRefEqpt" title="Populate a demo library with common coherent DWDM transceiver modes (baud rate, OSNR, spacing) so you can prototype without a vendor file">Use reference optics library</button>
+    <span id="eqptBadge" style="font-family:var(--mono);font-size:11px;color:var(--dim);"></span>
+    <button id="btnClear">Clear canvas</button>
+    <button id="btnImport">Import JSON</button>
+    <button id="btnExport">Export JSON</button>
+    <button id="btnServices">Service demands <span id="demandCount" style="color:var(--dim)"></span></button>
+    <button id="btnLinkBudget">Link budget</button>
+    <button id="btnRun" class="primary">Run calculation</button>
+    <input type="file" id="fileImport" accept="application/json" style="display:none">
+    <input type="file" id="eqptLoadInput" accept="application/json" style="display:none">
+  </header>
+
+  <div id="palette">
+    <h3>Elements</h3>
+    <div class="node-tpl" draggable="true" data-type="Transceiver"><div class="swatch" style="background:#4fd1c5"></div>Transceiver</div>
+    <div class="node-tpl" draggable="true" data-type="Roadm"><div class="swatch" style="background:#f0a35e"></div>ROADM</div>
+    <div class="node-tpl" draggable="true" data-type="Fiber"><div class="swatch" style="background:#7aa2f7"></div>Fiber span</div>
+    <div class="node-tpl" draggable="true" data-type="Edfa"><div class="swatch" style="background:#c792ea"></div>EDFA</div>
+    <div class="node-tpl" draggable="true" data-type="Fused"><div class="swatch" style="background:#7c8ba1"></div>Fused</div>
+    <div class="node-tpl" draggable="true" data-type="RamanFiber"><div class="swatch" style="background:#6fcf97"></div>Raman fiber (pumped span)</div>
+    <div class="node-tpl" draggable="true" data-type="Multiband_amplifier"><div class="swatch" style="background:#e0995e"></div>Multiband EDFA (C+L)</div>
+    <p class="hint">Drag an element onto the canvas. Click a node, then click <b>Link</b> and click another node to connect them in signal-flow order. Click an edge or node to edit / delete it.</p>
+    <button class="toolbtn" id="btnLinkMode" style="width:100%;margin-top:10px;">🔗 Link mode: off</button>
+
+    <h3 style="margin-top:22px;">Templates</h3>
+    <div class="node-tpl" draggable="true" data-template="roadm_degree" style="border-color:#e0995e;">
+      <div class="swatch" style="background:#e0995e"></div>ROADM degree (mux/demux)
+    </div>
+    <p class="hint">Drops a ROADM with mux/demux insertion-loss elements on its add and drop sides in one go \u2014 GNPy still sees them as lumped Fused-loss nodes (see note below), but it saves you wiring the same 3\u2013node pattern by hand for every degree.</p>
+  </div>
+
+  <div id="canvasWrap">
+    <svg id="canvas" width="2400" height="1400"></svg>
+  </div>
+
+  <div id="inspector">
+    <h3>Inspector</h3>
+    <div id="inspectorBody"><div class="empty">Select a node or connection to edit its properties.</div></div>
+  </div>
+
+  <div id="consoleWrap">
+    <div id="consoleBar">
+      <span class="chev">▾</span>
+      <span class="tag">console //</span>
+      <span class="spacer"></span>
+      <button id="btnPopConsole" title="Open console in its own window">Pop out ⧉</button>
+      <button id="btnCollapseConsole" title="Collapse / expand console">Expand</button>
+    </div>
+    <div id="console"><span class="tag">console //</span> ready. Build a topology and hit "Run calculation".</div>
+  </div>
+</div>
+
+<dialog id="serviceDialog" style="width:720px;">
+  <h3>Service demands (path-request)</h3>
+  <p style="color:var(--dim);font-size:12px;margin-top:-6px;line-height:1.5;">
+    Each demand is a routed request between two transceivers in your topology — GNPy will
+    compute the path and QoT for each one. Source/destination lists are populated from the
+    Transceiver nodes currently on the canvas.
+  </p>
+  <div id="demandList" style="max-height:340px;overflow-y:auto;margin-top:8px;"></div>
+  <button class="toolbtn" id="addDemandBtn" style="margin-top:10px;">+ Add demand</button>
+  <div class="row" style="justify-content:space-between;">
+    <button class="toolbtn" id="exportServiceBtn">Export service JSON</button>
+    <div style="display:flex;gap:10px;">
+      <button class="toolbtn" id="serviceDlgClose">Done</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="linkBudgetDialog" style="width:760px;">
+  <h3>Link budget (quick estimate)</h3>
+  <p style="color:var(--dim);font-size:12px;margin-top:-6px;line-height:1.5;">
+    A fast, client-side power-diagram estimate along each Tx\u2192Rx path in your topology \u2014
+    fiber loss, connector loss, EDFA/ROADM gain-or-target applied in sequence. This is a sanity
+    check for spotting a mis-sized span or missing amplifier before you spend a full GNPy run;
+    it is not a substitute for GNPy's QoT/OSNR physics. Use "Run calculation" for the real numbers.
+  </p>
+  <div class="field" style="margin-top:10px;">
+    <label>PATH</label>
+    <select id="lbPathSelect"></select>
+  </div>
+  <div id="lbSummary" style="display:flex;gap:18px;flex-wrap:wrap;margin:10px 0;font-family:var(--mono);font-size:11.5px;color:var(--dim);"></div>
+  <div style="max-width:720px;"><canvas id="lbChart" height="70"></canvas></div>
+  <div id="lbTableWrap" style="max-height:220px;overflow-y:auto;margin-top:12px;"></div>
+  <div class="row">
+    <button class="toolbtn" id="lbClose">Close</button>
+  </div>
+</dialog>
+
+<dialog id="customModeDialog" style="width:480px;">
+  <h3>Define custom transceiver mode</h3>
+  <p style="color:var(--dim);font-size:12px;margin-top:-6px;line-height:1.5;">
+    Adds a new mode to <code id="cmVarietyLabel"></code> in the (in-memory) equipment library,
+    so it shows up in every trx_mode dropdown and can actually be used to Run \u2014 no external
+    file editing needed. Fill this in from your optics vendor's datasheet for a real design.
+  </p>
+  <div class="field"><label>FORMAT NAME (shown in dropdowns)</label><input id="cmFormat" placeholder="e.g. 400ZR+ 16QAM"></div>
+  <div class="field"><label>BAUD RATE (GBd)</label><input id="cmBaud" type="number" step="0.01" placeholder="e.g. 59.84"></div>
+  <div class="field"><label>BIT RATE (Gb/s)</label><input id="cmBitRate" type="number" placeholder="e.g. 400"></div>
+  <div class="field"><label>MIN REQUIRED OSNR (dB, 0.1nm ref)</label><input id="cmOsnr" type="number" step="0.1" placeholder="e.g. 21"></div>
+  <div class="field"><label>MIN CHANNEL SPACING (GHz)</label><input id="cmSpacing" type="number" placeholder="e.g. 75"></div>
+  <div class="field"><label>ROLL-OFF (0\u20131)</label><input id="cmRolloff" type="number" step="0.01" placeholder="e.g. 0.05"></div>
+  <div class="field"><label>TX OSNR (dB, transmitter's own noise floor)</label><input id="cmTxOsnr" type="number" step="0.1" placeholder="e.g. 36"></div>
+  <div class="row">
+    <button class="toolbtn" id="cmCancel">Cancel</button>
+    <button class="toolbtn" id="cmSave" style="border-color:var(--accent);color:var(--accent)">Add mode</button>
+  </div>
+</dialog>
+
+<dialog id="channelPlanDialog" class="wide-dialog">
+  <h3>Transceiver channel plan</h3><p id="channelPlanOwner" class="help-text"></p>
+  <div class="tab-row"><button class="toolbtn active" id="fixedGridTab">Fixed grid</button><button class="toolbtn" id="flexGridTab">Flex grid</button></div>
+  <section id="fixedGridPanel">
+    <div class="form-grid">
+      <div class="field"><label>BAND PLAN</label><select id="bandPlanSelect"><option value="C">C-band only</option><option value="L">L-band only</option><option value="CL" selected>C+L band</option><option value="CUSTOM">Custom range</option></select></div>
+      <div class="field"><label>SPACING (GHz)</label><input id="fixedSpacingGhz" type="number" step="12.5" value="50"></div>
+      <div class="field"><label>BAUD RATE (GBd)</label><input id="fixedBaudGbd" type="number" step="0.01" value="32"></div>
+      <div class="field"><label>SLOT WIDTH (GHz)</label><input id="fixedSlotGhz" type="number" step="12.5" value="50"></div>
+      <div class="field"><label>DEFAULT POWER (dBm)</label><input id="fixedDefaultPowerDbm" type="number" step="0.1" value="0"></div>
+      <div class="field"><label>ROLL-OFF</label><input id="fixedRollOff" type="number" step="0.01" value="0.15"></div>
+      <div class="field"><label>TX OSNR (dB)</label><input id="fixedTxOsnr" type="number" step="0.1" value="40"></div>
+    </div>
+    <div class="band-grid">
+      <fieldset id="lBandFields"><legend>L-band</legend><div class="field"><label>START (THz)</label><input id="lStartThz" type="number" step="0.05" value="186.1"></div><div class="field"><label>STOP (THz)</label><input id="lStopThz" type="number" step="0.05" value="191.3"></div></fieldset>
+      <fieldset id="guardBandFields"><legend>C/L guard</legend><div class="field"><label>UNUSED GRID SLOTS</label><input id="guardSlots" type="number" min="0" step="1" value="0"></div><p id="guardBandSummary" class="help-text"></p></fieldset>
+      <fieldset id="cBandFields"><legend>C-band</legend><div class="field"><label>START (THz)</label><input id="cStartThz" type="number" step="0.05" value="191.35"></div><div class="field"><label>STOP (THz)</label><input id="cStopThz" type="number" step="0.05" value="196.1"></div></fieldset>
+      <fieldset id="customBandFields" hidden><legend>Custom range</legend><div class="field"><label>START (THz)</label><input id="customStartThz" type="number" step="0.05" value="186.1"></div><div class="field"><label>STOP (THz)</label><input id="customStopThz" type="number" step="0.05" value="196.1"></div></fieldset>
+    </div>
+    <div class="row row-left"><button class="toolbtn" id="generateFixedChannelsButton">Generate channel list</button><label class="inline-label">Bulk power</label><input id="bulkPowerDbm" type="number" step="0.1" value="0" class="compact-input"><button class="toolbtn" id="applyAllPowerButton">Set all powers</button><span id="fixedChannelCount" class="status-text"></span></div>
+  </section>
+  <section id="flexGridPanel" hidden><p class="help-text">Band plan is used for validation. Flex channels remain individually editable.</p><button class="toolbtn" id="addFlexChannelButton">+ Add channel</button></section>
+  <div class="channel-table-wrap"><table class="channel-table"><thead><tr><th>Enabled</th><th>Channel</th><th>Band</th><th>Frequency THz</th><th>Baud GBd</th><th>Slot GHz</th><th>Power dBm</th><th>Roll-off</th><th>TX OSNR</th><th></th></tr></thead><tbody id="channelTableBody"></tbody></table></div>
+  <div class="row"><button class="toolbtn" id="channelPlanCancel">Cancel</button><button class="toolbtn" id="channelPlanApply">Apply channel plan</button></div>
+</dialog>
+<dialog id="runDialog"><h3>Run GNPy calculation</h3>
+<div class="field"><label>MODE</label><select id="modeSelect"><option value="transmission">Transmission example</option><option value="path-request">Path request</option></select></div>
+<div id="transmissionEndpointWrap"><div class="field"><label>SOURCE TRANSCEIVER</label><select id="transmissionSource"></select></div><div class="field"><label>DESTINATION TRANSCEIVER</label><select id="transmissionDestination"></select></div><div class="checkrow"><input type="checkbox" id="noInsertEdfas"><label for="noInsertEdfas">Disable automatic EDFA insertion and fiber splitting</label></div><div class="checkrow"><input type="checkbox" id="showChannels" checked><label for="showChannels">Show per-channel results</label></div></div>
+<div id="launchPowerWrap" class="field"><label>REFERENCE LAUNCH POWER (dBm/channel)</label><input type="number" id="launchPower" step="0.1" placeholder="Use equipment default"></div><p id="spectrumRunNote" class="help-text"></p><p id="eqptSourceNote" class="help-text"></p><label class="fileLbl" id="eqptFileLbl">Equipment library JSON</label><input type="file" id="eqptFile" accept="application/json"><div id="serviceFileWrap" hidden><p id="serviceSourceNote" class="help-text"></p><label class="fileLbl">Service JSON override</label><input type="file" id="serviceFile" accept="application/json"></div><div class="row"><button class="toolbtn" id="dlgCancel">Cancel</button><button class="toolbtn" id="dlgRun">Run</button></div></dialog>
+
+<script src="app.js" defer></script>
+<script src="research.js" defer></script>
+</body>
+</html>
